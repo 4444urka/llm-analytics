@@ -1,41 +1,41 @@
 # LLM Data Analytics
 
-Web-приложение для автоматического анализа данных с помощью ИИ-агента. Пользователь загружает CSV/Excel файл, а LLM самостоятельно проводит анализ через вызов инструмента выполнения Python-кода — вычисляет метрики, строит графики и формирует инсайты.
+Веб-приложение для автоматического анализа данных с помощью ИИ-агента. Пользователь загружает CSV/Excel файл, LLM самостоятельно проводит анализ через вызов инструмента выполнения Python-кода — вычисляет метрики, строит графики, формирует инсайты.
 
 ## Как это работает
 
-1. Пользователь загружает датасет через веб-интерфейс
-2. Сервер читает структуру файла (колонки, строки, примеры данных)
-3. Системный промпт с описанием данных и инструкциями пользователя → LLM
-4. **LLM как агент вызывает `run_python` tool** — выполняет код в песочнице
-5. Python-код исполняется (pandas, matplotlib, seaborn, sklearn), stdout/stderr/графики возвращаются LLM
-6. LLM итерирует: анализирует результаты, вызывает инструменты снова
-7. Финальный отчёт с метриками, графиками и инсайтами → пользователю
+1. Загрузка датасета (CSV/Excel) через веб-интерфейс
+2. Сервер читает структуру: колонки, типы, примеры строк → сохраняет в SQLite
+3. Системный промпт + описание данных + инструкции пользователя → LLM
+4. **LLM-агент вызывает `run_python` tool** — код исполняется в изолированной песочнице
+5. Python (pandas, matplotlib, seaborn, sklearn) возвращает stdout, stderr, сгенерированные PNG-графики
+6. LLM итерирует: анализирует результаты, вызывает инструменты повторно, пока не сформирует отчёт
+7. Результат стримится через SSE — текст появляется постепенно, графики подгружаются
 
 ## Архитектура
 
 ```
 llm-analytics/
-├── backend/               # Go REST API (net/http)
-│   ├── main.go            # Точка входа, CORS, статика
-│   ├── config/config.go   # Конфигурация (env)
-│   ├── handler/handler.go # HTTP-обработчики API
+├── backend/                  # Go REST API (net/http)
+│   ├── main.go               # Точка входа, CORS, embed фронтенда
+│   ├── config/config.go      # Конфиг + авто-загрузка .env
+│   ├── db/db.go              # SQLite: сессии, датасеты, графики (BLOB)
+│   ├── handler/handler.go    # HTTP: upload, analyze, SSE, results, charts
 │   ├── agent/
-│   │   ├── agent.go       # Оркестрация LLM + tool calling
-│   │   ├── llm.go         # Клиент LLM API (OpenAI-совместимый)
-│   │   └── sandbox.go     # Python-песочница
-│   ├── session/store.go   # Хранение сессий
+│   │   ├── agent.go          # Агент: цикл LLM + tool calling + принудительный финиш
+│   │   ├── llm.go            # OpenAI-совместимый клиент + SSE-стриминг
+│   │   └── sandbox.go        # Python-песочница (subprocess, timeout, изоляция)
 │   └── security/
-│       ├── prompt.go      # Системный промпт
-│       └── sanitize.go    # Защита от инъекций
-├── frontend/              # React + Vite + TypeScript
+│       ├── prompt.go         # Системный промпт
+│       └── sanitize.go       # Защита от prompt-injection и code-injection
+├── frontend/                 # React 18 + Vite + TypeScript
 │   ├── src/
-│   │   ├── App.tsx        # Главный компонент
-│   │   ├── types.ts       # Типы API
-│   │   └── styles.css     # Стили (GitHub dark theme)
-│   ├── vite.config.ts     # Конфиг Vite (прокси к бэкенду)
-│   └── package.json
-├── Dockerfile             # Multi-stage сборка
+│   │   ├── App.tsx           # SSE-стриминг, Markdown, графики
+│   │   ├── types.ts          # Типы API
+│   │   └── components/       # UploadArea, Header, Card
+│   └── vite.config.ts        # Прокси /api → backend, сборка в backend/frontend-dist/
+├── Makefile                  # build, run, dev, clean
+├── Dockerfile                # Multi-stage: node + go + python
 └── README.md
 ```
 
@@ -43,127 +43,136 @@ llm-analytics/
 
 | Слой | Технология |
 |---|---|
-| Фронтенд | React 18, TypeScript, Vite, react-markdown |
-| Бэкенд | Go (стандартная библиотека `net/http`) |
-| LLM API | GitHub Models (Azure AI Inference) — **бесплатно** |
-| Sandbox | Python (pandas, numpy, matplotlib, seaborn, scikit-learn) |
-
-## LLM API: GitHub Models
-
-Используется **GitHub Models** — бесплатный доступ к GPT-4o, Llama, Mistral и др. через Azure AI Inference API.
-
-1. Получить токен: https://github.com/settings/tokens (никакие scopes не нужны)
-2. API совместим с OpenAI форматом, меняется только base URL
-3. Бесплатные лимиты: достаточны для тестирования и небольших задач
+| Фронтенд | React 18, TypeScript, Vite, react-markdown, remark-gfm |
+| Бэкенд | Go (net/http), SQLite (modernc.org/sqlite), embed.FS |
+| LLM API | DeepSeek / OpenAI-совместимые (function calling + SSE streaming) |
+| Sandbox | Python 3 (pandas, numpy, matplotlib, seaborn, scikit-learn) |
 
 ## Быстрый старт
 
-### 1. Бэкенд
+### Предварительные требования
+
+- Go 1.21+
+- Node.js 20+
+- Python 3.10+ с пакетами: `pandas numpy matplotlib seaborn scikit-learn openpyxl`
+- API ключ DeepSeek (https://platform.deepseek.com)
+
+### 1. Установка Python-зависимостей
 
 ```bash
-cd backend
-
-# Установка Python-зависимостей
 python3 -m venv .venv
 source .venv/bin/activate
 pip install pandas numpy matplotlib seaborn scikit-learn openpyxl
-
-# Настройка API ключа GitHub Models
-export LLM_API_KEY=ghp_your_github_token
-export PYTHON_BIN=.venv/bin/python3
-
-# Запуск
-go run .
-# API: http://localhost:8080
 ```
 
-### 2. Фронтенд
+### 2. Настройка `.env`
+
+Создать файл `.env` в корне проекта (переменные загружаются автоматически):
 
 ```bash
-cd frontend
-npm install
-npm run dev
-# Открыть http://localhost:5173
+LLM_API_KEY=sk-your-deepseek-key
+PYTHON_BIN=../.venv/bin/python3
 ```
 
-Vite проксирует `/api/*` и `/charts/*` на бэкенд (порт 8080).
-
-### 3. Production (монолит)
+### 3. Сборка и запуск (один бинарник)
 
 ```bash
-cd frontend && npm run build   # сборка в frontend/dist/
-cd ../backend
-export LLM_API_KEY=ghp_your_token
-export PYTHON_BIN=.venv/bin/python3
-go run .
-# Открыть http://localhost:8080 (сервер раздаёт и API, и статику)
+make build   # frontend → backend/frontend-dist/ → go build
+./backend/server
+# Открыть http://localhost:8080
+```
+
+Или раздельно:
+
+```bash
+# Терминал 1 — бэкенд
+cd backend && go run .
+
+# Терминал 2 — фронтенд (dev с hot reload)
+cd frontend && npm install && npm run dev
+# → http://localhost:5173 (проксирует /api к :8080)
 ```
 
 ### Docker
 
 ```bash
 docker build -t llm-analytics .
-docker run -p 8080:8080 \
-  -e LLM_API_KEY=ghp_your_token \
-  llm-analytics
+docker run -p 8080:8080 -e LLM_API_KEY=sk-xxx llm-analytics
 ```
 
 ## Переменные окружения
 
 | Переменная | Назначение | По умолчанию |
 |---|---|---|
-| `LLM_API_KEY` | GitHub токен или OpenAI ключ | **обязательно** |
-| `LLM_API_BASE` | Базовый URL LLM API | `https://models.inference.ai.azure.com` |
-| `LLM_MODEL` | Модель | `gpt-4o` |
-| `PORT` | Порт бэкенда | `8080` |
-| `FRONTEND_ORIGIN` | Origin фронтенда для CORS | `http://localhost:5173` |
-| `UPLOAD_DIR` | Директория загрузок | `./uploads` |
+| `LLM_API_KEY` | API ключ | **обязательно** |
+| `LLM_API_BASE` | Базовый URL | `https://api.deepseek.com/v1` |
+| `LLM_MODEL` | Модель | `deepseek-v4-flash` |
+| `PORT` | Порт | `8080` |
+| `DB_PATH` | Путь к SQLite | `./data.db` |
 | `MAX_UPLOAD_SIZE_MB` | Макс. размер файла | `50` |
 | `PYTHON_BIN` | Путь к Python 3 | `python3` |
-| `PYTHON_TIMEOUT_SEC` | Таймаут выполнения кода | `60` |
-
-## Доступные модели GitHub Models
-
-| Модель | `LLM_MODEL` |
-|---|---|
-| GPT-4o | `gpt-4o` |
-| GPT-4o-mini | `gpt-4o-mini` |
-| Llama 3.3 70B | `Llama-3.3-70B-Instruct` |
-| Mistral Large | `Mistral-large` |
-| Phi-4 | `Phi-4` |
-| DeepSeek V3 | `DeepSeek-V3` |
+| `PYTHON_TIMEOUT_SEC` | Таймаут кода | `60` |
+| `FRONTEND_ORIGIN` | Origin для CORS | `http://localhost:5173` |
 
 ## API
 
-### `POST /api/upload`
-Загрузка датасета. `multipart/form-data`: `dataset` (файл), `instructions` (опционально).
+| Метод | Путь | Описание |
+|---|---|---|
+| `POST` | `/api/upload` | Загрузка CSV/Excel (multipart: `dataset`, `instructions`) |
+| `POST` | `/api/analyze` | Блокирующий анализ (`{"session_id":"..."}`) |
+| `POST` | `/api/analyze/stream` | SSE-стриминг (`text/event-stream`) |
+| `GET` | `/api/results?session_id=...` | Результат: отчёт, графики, статус |
+| `GET` | `/api/status?session_id=...` | Статус анализа |
+| `GET` | `/charts/{name}?session_id=...` | PNG-график |
+| `GET` | `/api/health` | Проверка: `{"status":"ok"}` |
 
-### `POST /api/analyze`
-Запуск анализа. `{"session_id": "..."}`.
+## SSE-события стриминга
 
-### `GET /api/results?session_id=...`
-Получение результатов.
+| `type` | `content` | Когда |
+|---|---|---|
+| `text` | Токен текста | LLM генерирует ответ |
+| `status` | `"Running Python code..."` | Смена состояния агента |
+| `done` | — | Агент завершил анализ |
+| `charts` | `["chart1.png", ...]` | Графики сохранены |
+| `complete` | Итоговый отчёт | Конец стрима |
+| `error` | Текст ошибки | Ошибка |
 
-### `GET /charts/{name}?session_id=...`
-Сгенерированный график (PNG).
+## Особенности
 
-### `GET /api/status?session_id=...`
-Статус анализа.
+### Агентный анализ
+LLM не получает готовую статистику — он сам вызывает `run_python` tool до 20 итераций, каждая итерация: сгенерировать код → исполнить → получить результат → продолжить анализ. На 15-й итерации инструменты принудительно отключаются, LLM выдаёт финальный отчёт.
 
-### `GET /api/health`
-Проверка работоспособности.
+### Единый бинарник
+`make build` собирает фронтенд в `backend/frontend-dist/`, Go встраивает его через `embed.FS`. Один файл `server` (~15 MB) содержит всё — бэкенд, API, SQLite, фронтенд.
+
+### SQLite вместо файловой системы
+Датасеты и графики хранятся как BLOB в таблицах `datasets` и `charts`. Сессии — в `sessions`. Никаких `uploads/`.
+
+### Авто-загрузка `.env`
+Сервер при старте ищет `.env` в текущей директории, родительской и рядом с бинарником. Существующие переменные окружения имеют приоритет.
 
 ## Защита от prompt injection
 
-- Фильтрация инструкций пользователя: regex-паттерны jailbreak, переопределения системного промпта
-- Блокировка опасных Python-вызовов (`os.system`, `subprocess`, `eval`/`exec`, сетевые операции)
+- Фильтрация пользовательских инструкций: regex-паттерны jailbreak, переопределения промпта, DAN
+- Блокировка опасных Python-вызовов: `os.system`, `rm -rf`, `curl`, `wget`, `sudo`, `/bin/bash`, `eval()`, `exec()`, `compile()`
 - Non-negotiable системный промпт
-- Таймаут выполнения кода (60 сек)
-- Валидация расширений файлов
+- Песочница: таймаут 60 сек, изолированный PATH, нет сети
+- Валидация расширений: только `.csv`, `.xlsx`, `.xls`
+
+## Тесты
+
+```bash
+cd backend
+go test -v ./agent/ -run TestSandbox -timeout 60s
+```
+
+Тесты покрывают: базовое исполнение Python, чтение CSV через pandas, генерацию графиков matplotlib, обработку ошибок.
 
 ## Критерии (для курса)
 
-- LLM как агент: вызывает tool `run_python`, а не перефразирует готовые данные
+- LLM как агент: вызывает `run_python` tool, не перефразирует готовые данные
 - Инструкции пользователя: можно указать, на что обратить внимание
 - Веб-интерфейс: React + Vite
 - Защита от prompt injection: да
+- SSE-стриминг: ответ появляется постепенно
+- Единый бинарник: фронтенд встроен в Go

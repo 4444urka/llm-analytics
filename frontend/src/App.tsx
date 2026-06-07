@@ -96,14 +96,29 @@ function App() {
               setStreamStatus("");
             } else if (event.type === "status") {
               setStreamStatus(event.content || "");
-            } else if (event.type === "complete" || event.type === "done") {
-              const finalReport = event.content || streamText;
-              setResult({
-                session_id: sessionRef.current,
-                status: "completed",
-                report: finalReport,
-                charts: [],
-              });
+            } else if (event.type === "done") {
+            } else if (event.type === "charts") {
+              const chartNames: string[] = Array.isArray(event.content)
+                ? (event.content as unknown as string[])
+                : JSON.parse((event.content as string) || "[]");
+              setResult(
+                (prev): AnalysisResult => ({
+                  session_id: sessionRef.current,
+                  status: prev?.status || "analyzing",
+                  report: prev?.report || streamText,
+                  charts: chartNames,
+                }),
+              );
+            } else if (event.type === "complete") {
+              const finalReport = (event.content as string) || streamText;
+              setResult(
+                (prev): AnalysisResult => ({
+                  session_id: sessionRef.current,
+                  status: "completed",
+                  report: finalReport || prev?.report || streamText,
+                  charts: prev?.charts || [],
+                }),
+              );
               setState("done");
               setFile(null);
               setInstructions("");
@@ -146,7 +161,10 @@ function App() {
 
   return (
     <div className="app">
-      <Header title="Аналитика данных" />
+      <Header
+        title="Data analytics"
+        description="Upload your data and let the AI analyze it for you"
+      />
 
       <Card>
         <UploadArea
