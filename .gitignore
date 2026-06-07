@@ -1,0 +1,15 @@
+.venv/
+uploads/
+.env
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server
+.DS_Store
+node_modules/
+frontend/dist/
+backend/frontend-dist/
+*.log
+*.db
