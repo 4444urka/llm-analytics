@@ -33,7 +33,7 @@ func Load() *Config {
 		MaxUploadSizeMB: getEnvInt64("MAX_UPLOAD_SIZE_MB", 50),
 		PythonBin:       getEnv("PYTHON_BIN", "python3"),
 		PythonTimeout:   getEnvInt("PYTHON_TIMEOUT_SEC", 60),
-		FrontendOrigin:  getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
+		FrontendOrigin:  getEnv("FRONTEND_ORIGIN", ""),
 	}
 }
 

@@ -1,0 +1,75 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: backend/go.sum
+
+      - name: Build frontend
+        run: cd frontend && npm ci && npm run build
+
+      - name: Build binary
+        run: |
+          cd backend
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-s -w" \
+            -o llm-analytics .
+
+      - name: Upload binary via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: backend/llm-analytics,deploy/llm-analytics.service
+          target: /tmp/llm-analytics-deploy/
+          strip_components: 0
+
+      - name: Deploy service
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          port: ${{ secrets.SSH_PORT }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+
+            sudo mv /tmp/llm-analytics-deploy/backend/llm-analytics /opt/llm-analytics/llm-analytics
+            sudo chmod +x /opt/llm-analytics/llm-analytics
+
+            sudo mv /tmp/llm-analytics-deploy/deploy/llm-analytics.service /etc/systemd/system/llm-analytics.service
+            rm -rf /tmp/llm-analytics-deploy
+
+            # env file — create from secrets if it doesn't exist
+            if [ ! -f /opt/llm-analytics/.env ]; then
+              echo "LLM_API_KEY=${{ secrets.LLM_API_KEY }}" | sudo tee /opt/llm-analytics/.env > /dev/null
+              echo "LLM_API_BASE=${{ secrets.LLM_API_BASE }}" | sudo tee -a /opt/llm-analytics/.env > /dev/null
+              echo "LLM_MODEL=${{ secrets.LLM_MODEL }}" | sudo tee -a /opt/llm-analytics/.env > /dev/null
+              echo "PORT=${{ secrets.PORT }}" | sudo tee -a /opt/llm-analytics/.env > /dev/null
+              sudo chmod 600 /opt/llm-analytics/.env
+            fi
+
+            sudo systemctl daemon-reload
+            sudo systemctl enable llm-analytics
+            sudo systemctl restart llm-analytics
+
+            sudo systemctl status llm-analytics --no-pager

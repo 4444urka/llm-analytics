@@ -112,7 +112,7 @@ docker run -p 8080:8080 -e LLM_API_KEY=sk-xxx llm-analytics
 | `MAX_UPLOAD_SIZE_MB` | Макс. размер файла | `50` |
 | `PYTHON_BIN` | Путь к Python 3 | `python3` |
 | `PYTHON_TIMEOUT_SEC` | Таймаут кода | `60` |
-| `FRONTEND_ORIGIN` | Origin для CORS | `http://localhost:5173` |
+| `FRONTEND_ORIGIN` | Origin для CORS (только dev) | _(пусто)_ |
 
 ## API
 
@@ -159,14 +159,73 @@ LLM не получает готовую статистику — он сам в
 - Песочница: таймаут 60 сек, изолированный PATH, нет сети
 - Валидация расширений: только `.csv`, `.xlsx`, `.xls`
 
+## CI/CD
+
+### CI (автоматически на push/PR в `main`)
+
+`.github/workflows/ci.yml` — сборка фронтенда, прогон Go-тестов, сборка бинарника.
+
+### CD / Деплой
+
+`.github/workflows/deploy.yml` — сборка единого бинарника → SCP на сервер → systemd unit → перезапуск сервиса.
+
+**Требования к серверу:**
+- Linux с systemd
+- Python 3.12+ с пакетами: `pandas numpy matplotlib seaborn scikit-learn openpyxl`
+
+**Первичная настройка сервера (один раз):**
+
+```bash
+# Создать пользователя и директорию
+sudo useradd -r -s /bin/false llm-analytics
+sudo mkdir -p /opt/llm-analytics
+sudo chown llm-analytics:llm-analytics /opt/llm-analytics
+
+# Установить python-зависимости
+pip install pandas numpy matplotlib seaborn scikit-learn openpyxl
+```
+
+**Secrets для GitHub Actions:**
+
+| Secret | Назначение |
+|---|---|
+| `SSH_HOST` | IP/домен сервера |
+| `SSH_PORT` | Порт SSH (обычно `22`) |
+| `SSH_USER` | Пользователь с sudo (напр. `root`) |
+| `SSH_PRIVATE_KEY` | Приватный SSH-ключ |
+| `LLM_API_KEY` | API-ключ DeepSeek |
+| `LLM_API_BASE` | `https://api.deepseek.com/v1` |
+| `LLM_MODEL` | `deepseek-v4-flash` |
+| `PORT` | `8080` |
+
+После деплоя:
+
+```bash
+sudo systemctl status llm-analytics    # состояние
+sudo journalctl -u llm-analytics -f    # логи
+```
+
+Ручной деплой (без GitHub Actions):
+
+```bash
+make build
+scp backend/server user@host:/opt/llm-analytics/llm-analytics
+scp deploy/llm-analytics.service user@host:/tmp/
+ssh user@host "
+  sudo mv /tmp/llm-analytics.service /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl restart llm-analytics
+"
+```
+
 ## Тесты
 
 ```bash
 cd backend
-go test -v ./agent/ -run TestSandbox -timeout 60s
+go test ./... -v -timeout 60s
 ```
 
-Тесты покрывают: базовое исполнение Python, чтение CSV через pandas, генерацию графиков matplotlib, обработку ошибок.
+Тесты покрывают: загрузку CSV, SQLite CRUD, интеграционные эндпоинты, безопасность, песочницу Python, CORS.
 
 ## Критерии (для курса)
 

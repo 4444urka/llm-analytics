@@ -1,0 +1,30 @@
+[Unit]
+Description=LLM Data Analytics
+After=network.target
+
+[Service]
+Type=simple
+User=llm-analytics
+Group=llm-analytics
+WorkingDirectory=/opt/llm-analytics
+ExecStart=/opt/llm-analytics/llm-analytics
+
+EnvironmentFile=/opt/llm-analytics/.env
+
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/llm-analytics
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-analytics
+
+[Install]
+WantedBy=multi-user.target

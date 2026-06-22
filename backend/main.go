@@ -57,12 +57,16 @@ func main() {
 
 	serveEmbedded(mux)
 
-	wrappedMux := handler.CORSMiddleware(mux, cfg.FrontendOrigin)
+	var app http.Handler = mux
+	if cfg.FrontendOrigin != "" {
+		app = handler.CORSMiddleware(mux, cfg.FrontendOrigin)
+		log.Printf("CORS enabled for origin: %s", cfg.FrontendOrigin)
+	}
 
 	addr := ":" + cfg.Port
 	log.Printf("Server starting on http://localhost%s", addr)
 
-	if err := http.ListenAndServe(addr, wrappedMux); err != nil {
+	if err := http.ListenAndServe(addr, app); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
